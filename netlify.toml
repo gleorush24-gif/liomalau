@@ -1,7 +1,7 @@
 [build]
   base = "app"
-  command = "flutter build web --dart-define=API_URL=$API_URL --dart-define=WS_URL=$WS_URL --release"
-  publish = "app/build/web"
+  command = "git clone https://github.com/flutter/flutter.git --depth 1 -b stable $HOME/flutter && export PATH=$PATH:$HOME/flutter/bin && flutter pub get && flutter build web --dart-define=API_URL=$API_URL --dart-define=WS_URL=$WS_URL --release"
+  publish = "build/web"
 
 [[redirects]]
   from = "/*"

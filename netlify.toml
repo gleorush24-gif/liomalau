@@ -1,0 +1,9 @@
+[build]
+  base = "app"
+  command = "flutter build web --dart-define=API_URL=$API_URL --dart-define=WS_URL=$WS_URL --release"
+  publish = "app/build/web"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

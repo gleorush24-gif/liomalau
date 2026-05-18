@@ -1,0 +1,37 @@
+name: liomalau
+description: Argument analysis platform grounded in international law
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # HTTP client - for REST API calls to the gateway
+  http: ^1.2.1
+
+  # WebSocket - for live verdict + score updates
+  web_socket_channel: ^2.4.5
+
+  # State management - Provider is the simplest for learning
+  # (Redux/Bloc are more powerful but overkill for now)
+  provider: ^6.1.2
+
+  # UUID generation - for creating local IDs
+  uuid: ^4.4.0
+
+  # Pretty JSON display in the sources panel
+  flutter_json_view: ^1.0.8
+
+  # Loading animations
+  shimmer: ^3.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true

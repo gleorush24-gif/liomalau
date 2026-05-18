@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.dart_tool/
+build/
+*.g.dart
+node_modules/

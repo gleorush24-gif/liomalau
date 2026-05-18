@@ -1,0 +1,86 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────
+#  lioMalau – all services in one command:
+#  $ docker-compose up --build
+# ─────────────────────────────────────────────
+
+services:
+
+  # ── 1. Panel database (the neutral judge) ──────────────────
+  panel-db:
+    image: pgvector/pgvector:pg16      # postgres + vector search extension
+    container_name: liomalau_db
+    environment:
+      POSTGRES_DB: liomalau
+      POSTGRES_USER: judge
+      POSTGRES_PASSWORD: gavel123
+    volumes:
+      - db_data:/var/lib/postgresql/data        # persist data between restarts
+      - ./panel-db/migrations:/docker-entrypoint-initdb.d  # auto-runs on first boot
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U judge -d liomalau"]
+      interval: 5s
+      retries: 5
+
+  # ── 2. Redis (session state + pub/sub for live updates) ────
+  redis:
+    image: redis:7-alpine
+    container_name: liomalau_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 5
+
+  # ── 3. Python AI engine ────────────────────────────────────
+  ai-engine:
+    build: ./ai-engine
+    container_name: liomalau_ai
+    environment:
+      DATABASE_URL: postgresql://judge:gavel123@panel-db:5432/liomalau
+      REDIS_URL: redis://redis:6379
+      OPENAI_API_KEY: ${OPENAI_API_KEY}      # loaded from .env file
+    ports:
+      - "8001:8001"
+    depends_on:
+      panel-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./ai-engine:/app     # live reload during dev (code changes reflect instantly)
+
+  # ── 4. Go score engine ─────────────────────────────────────
+  score-engine:
+    build: ./score-engine
+    container_name: liomalau_score
+    environment:
+      DATABASE_URL: postgresql://judge:gavel123@panel-db:5432/liomalau
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "8002:8002"
+    depends_on:
+      panel-db:
+        condition: service_healthy
+
+  # ── 5. Go API gateway (Flutter talks to this only) ─────────
+  gateway:
+    build: ./gateway
+    container_name: liomalau_gateway
+    environment:
+      AI_ENGINE_URL: http://ai-engine:8001
+      SCORE_ENGINE_URL: http://score-engine:8002
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://judge:gavel123@panel-db:5432/liomalau
+    ports:
+      - "8000:8000"     # Flutter points here
+    depends_on:
+      - ai-engine
+      - score-engine
+
+volumes:
+  db_data:   # named volume — survives container restarts

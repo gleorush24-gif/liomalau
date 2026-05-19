@@ -23,6 +23,7 @@ async def retrieve_precedents(argument_text: str) -> list[PrecedentMatch]:
             FROM precedents p
             JOIN legal_sources ls ON p.source_id = ls.id
             WHERE p.embedding IS NOT NULL
+            AND 1 - (p.embedding <=> $1::vector) > 0.25
             ORDER BY p.embedding <=> $1::vector
             LIMIT $2
             """,

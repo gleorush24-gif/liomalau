@@ -9,7 +9,7 @@
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from models.schemas import ArgumentRequest, VerdictResponse, SessionCreateRequest, SessionResponse
-from services.rag_retrieval import retrieve_precedents, store_argument_embedding
+from services.rag_retrieval import retrieve_all, store_argument_embedding
 from services.counter_arg import adjudicate
 from services.embedder import embed_text
 from services.database import db_conn
@@ -58,10 +58,10 @@ async def submit_argument(
     embedding = await embed_text(payload.raw_text)
 
     # ── Step 3: retrieve matching precedents ──────────────────
-    precedents = await retrieve_precedents(payload.raw_text)
+    legal, knowledge = await retrieve_all(payload.raw_text)
 
     # ── Step 4: adjudicate ────────────────────────────────────
-    verdict = await adjudicate(argument_id, payload.raw_text, precedents)
+    verdict = await adjudicate(argument_id, payload.raw_text, legal, knowledge)
 
     # ── Step 5: persist verdict + embedding ───────────────────
     async with db_conn() as conn:

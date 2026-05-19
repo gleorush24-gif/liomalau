@@ -82,3 +82,4 @@ async def root():
             "get_scores":      "GET  /api/v1/sessions/{id}/scores",
         }
     }
+# v2 dual panel

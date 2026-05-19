@@ -27,6 +27,7 @@ dependencies:
 
   # Loading animations
   shimmer: ^3.0.0
+  url_launcher: ^6.3.0
 
 dev_dependencies:
   flutter_test:

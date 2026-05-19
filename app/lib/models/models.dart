@@ -1,18 +1,4 @@
 // lib/models/models.dart
-//
-// LESSON: Dart classes + fromJson
-//
-// Dart is strongly typed like Go, but with a more familiar OOP syntax.
-// `fromJson` is a named constructor — a factory that builds an object
-// from a Map (which is what JSON decodes to in Dart).
-// `toJson` converts back to a Map for sending to the API.
-//
-// Key Dart syntax differences from Python/Go:
-//   final = assigned once, can't be reassigned (like Go's const for variables)
-//   ? after type = nullable (String? means "String or null")
-//   required = named parameter that must be provided
-//   => single-expression function shorthand
-
 class PrecedentMatch {
   final String id;
   final String sourceCode;
@@ -21,6 +7,7 @@ class PrecedentMatch {
   final String stance;
   final double weight;
   final double similarity;
+  final String url;
 
   const PrecedentMatch({
     required this.id,
@@ -30,9 +17,9 @@ class PrecedentMatch {
     required this.stance,
     required this.weight,
     required this.similarity,
+    this.url = "",
   });
 
-  // Named constructor — builds from JSON map
   factory PrecedentMatch.fromJson(Map<String, dynamic> json) => PrecedentMatch(
         id: json['id'],
         sourceCode: json['source_code'],
@@ -41,6 +28,7 @@ class PrecedentMatch {
         stance: json['stance'],
         weight: (json['weight'] as num).toDouble(),
         similarity: (json['similarity'] as num).toDouble(),
+        url: json['url'] ?? '',
       );
 }
 
@@ -123,12 +111,11 @@ class SessionResponse {
       );
 }
 
-// A debate "turn" — one argument + its verdict shown in the exchange feed
 class DebateTurn {
   final String partyId;
   final String partyLabel;
   final String rawText;
-  final VerdictResponse? verdict; // null while loading
+  final VerdictResponse? verdict;
   final bool isLoading;
 
   const DebateTurn({

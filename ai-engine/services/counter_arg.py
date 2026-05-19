@@ -9,37 +9,38 @@ settings = get_settings()
 _client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 JUDGE_SYSTEM_PROMPT = """
-You are the lioMalau Adjudication Engine — a neutral panel judge grounded solely in international law and human rights instruments.
+You are the lioMalau Universal Adjudication Engine.
+
+You judge arguments on ANY topic using two panels:
+1. LEGAL PANEL: UN resolutions, Geneva Conventions, treaties, ICC rulings
+2. KNOWLEDGE PANEL: Documented positions from researchers, historians, scientists, philosophers
+
+SCORING RUBRIC:
++2.0 = Strongly supported by peer-reviewed evidence OR binding international law
++1.5 = Supported by strong expert consensus or well-documented historical record
++1.0 = Supported by credible expert opinion or documented advocacy position
+-1.0 = Contradicted by credible expert opinion or documented evidence
+-1.5 = Contradicted by strong expert consensus or historical record
+-2.0 = Directly contradicted by peer-reviewed evidence OR binding law
+ 0.0 = Genuinely contested with strong evidence on both sides
 
 CRITICAL RULES:
-1. You MUST rule on EVERY argument — never refuse to rule
-2. If an argument describes a factual event (e.g. "forces attacked a ship"), identify the LEGAL IMPLICATIONS of that event and rule on those
-3. Even if exact precedents are not provided, use your knowledge of international law to rule — but cite which body of law applies
-4. "Inconclusive" should only be used when the claim is genuinely ambiguous under international law — NOT because you lack precedents
-5. Factual statements about military actions, blockades, detentions, or attacks ALWAYS have legal implications under IHL or IHRL
-
-SCORING:
-+2.0 = binding law clearly supports the claim
-+1.0 = advisory/soft law supports the claim
--2.0 = binding law clearly contradicts the claim
--1.0 = advisory law contradicts the claim
-0.0 = genuinely inconclusive after careful analysis
-
-For factual statements about events:
-- Attacks on civilian ships in international waters → apply UNCLOS + Geneva Conventions
-- Deportation of activists → apply ICCPR Article 9 + non-refoulement
-- Blockades preventing aid → apply GC IV Article 23 + AP I Article 54
-- Military force against unarmed civilians → apply IHL distinction principle
+1. ALWAYS give a definitive ruling. Never refuse to engage.
+2. For factual events: identify legal implications and rule on those
+3. For historical claims: cite historians on both sides
+4. For scientific claims: cite peer-reviewed consensus
+5. For philosophical claims: cite thinkers on both sides
+6. Always name specific authors, papers, or legal instruments
 
 Respond ONLY with valid JSON:
 {
-  "parsed_claim": "string — the core legal claim or legal implication of the stated fact",
-  "overall_stance": "supports" or "contradicts" or "inconclusive",
+  "parsed_claim": "the core claim being made",
+  "overall_stance": "supports" | "contradicts" | "inconclusive",
   "score_delta": float,
-  "confidence": float 0.0-1.0,
-  "explanation": "string — cite specific law articles in your explanation",
-  "counter_argument": "string — cite specific legal text",
-  "precedent_stances": {"<precedent_id>": "supports" or "contradicts" or "inconclusive"}
+  "confidence": float,
+  "explanation": "2-3 sentences citing specific sources",
+  "counter_argument": "strongest counter with specific citations",
+  "precedent_stances": {"<id>": "supports" | "contradicts" | "inconclusive"}
 }
 """.strip()
 
@@ -48,27 +49,36 @@ async def adjudicate(
     argument_id: uuid.UUID,
     raw_text: str,
     precedents: list[PrecedentMatch],
+    knowledge_claims: list[dict] = None,
 ) -> VerdictResponse:
-    precedent_context = "\n\n".join([
-        f"[{p.source_code}] {p.article_ref or ''}\n"
-        f"Summary: {p.summary}\n"
-        f"Weight: {'BINDING' if p.weight >= 1.0 else 'ADVISORY'}\n"
-        f"ID: {p.id}"
-        for p in precedents
-    ]) if precedents else "No precedents retrieved — use your knowledge of international law to rule."
+
+    legal_context = ""
+    if precedents:
+        legal_context = "LEGAL PRECEDENTS:\n" + "\n\n".join([
+            f"[{p.source_code}] {p.article_ref}\nSummary: {p.summary}\nWeight: {'BINDING' if p.weight >= 1.0 else 'ADVISORY'}\nID: {p.id}"
+            for p in precedents
+        ])
+
+    knowledge_context = ""
+    if knowledge_claims:
+        knowledge_context = "\n\nKNOWLEDGE PANEL (researchers, historians, thinkers):\n" + "\n\n".join([
+            f"[{c['source_code']}] {c.get('author','Unknown')} ({c['credibility'].upper()})\n"
+            f"Claim: {c['summary']}\n"
+            f"Evidence type: {c['evidence_type']} | Side: {c['supports_side']} | Similarity: {float(c['similarity']):.2f}\n"
+            f"ID: {c['id']}"
+            for c in knowledge_claims
+        ])
+
+    full_context = (legal_context + knowledge_context) or "No panel documents retrieved — use your knowledge to rule."
 
     user_message = f"""
 ARGUMENT SUBMITTED:
 {raw_text}
 
-RELEVANT LEGAL PRECEDENTS:
-{precedent_context}
+{full_context}
 
-INSTRUCTIONS:
-- If this is a factual statement, identify its legal implications and rule on those
-- Always cite specific articles or conventions in your explanation
-- You MUST give a definitive ruling (supports/contradicts) unless truly ambiguous
-- Rule now. Respond in JSON only.
+Rule on this argument now. Cite specific authors, papers, or legal instruments.
+Respond in JSON only.
 """.strip()
 
     response = await _client.chat.completions.create(
@@ -82,14 +92,12 @@ INSTRUCTIONS:
         max_tokens=1200,
     )
 
-    raw_json = response.choices[0].message.content
-    data = json.loads(raw_json)
+    data = json.loads(response.choices[0].message.content)
 
     stances: dict[str, str] = data.get("precedent_stances", {})
     for p in precedents:
-        pid = str(p.id)
-        if pid in stances:
-            p.stance = Stance(stances[pid])
+        if str(p.id) in stances:
+            p.stance = Stance(stances[str(p.id)])
 
     return VerdictResponse(
         argument_id=argument_id,

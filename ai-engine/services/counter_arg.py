@@ -1,20 +1,6 @@
-# services/counter_arg.py
-#
-# LESSON: structured LLM output (JSON mode)
-#
-# By default, LLMs produce free-form text. For lioMalau we need
-# structured data: stance, score, explanation. We achieve this by:
-#   1. Telling the LLM to respond ONLY in JSON (response_format)
-#   2. Defining the exact JSON shape in the system prompt
-#   3. Parsing and validating with Pydantic
-#
-# This is the "structured output" pattern — critical for any
-# production AI feature that needs to feed data into a database.
-
 import json
 from openai import AsyncOpenAI
 from models.schemas import PrecedentMatch, Stance, VerdictResponse
-from services.embedder import embed_text
 from config import get_settings
 from datetime import datetime, timezone
 import uuid
@@ -22,38 +8,38 @@ import uuid
 settings = get_settings()
 _client = AsyncOpenAI(api_key=settings.openai_api_key)
 
-
-# ── System prompt — the judge's instructions ─────────────────
-# This is injected once at the start of every LLM call.
-# Good system prompts are specific about FORMAT and CONSTRAINTS.
-
 JUDGE_SYSTEM_PROMPT = """
-You are the lioMalau Adjudication Engine — a neutral panel judge.
-Your ONLY authority is international law and human rights instruments.
-You do not have personal opinions. You rule based solely on the legal
-precedents provided to you.
+You are the lioMalau Adjudication Engine — a neutral panel judge grounded solely in international law and human rights instruments.
 
-For every argument you receive, you must:
-1. Extract the core claim (one sentence, plain language)
-2. Assess each provided precedent: does it support or contradict the claim?
-3. Generate a factual counter-argument that cites specific legal text
-4. Compute a score delta: +2.0 (binding law supports), +1.0 (advisory supports),
-   -2.0 (binding law contradicts), -1.0 (advisory contradicts), 0.0 (inconclusive)
-5. Write a plain-language ruling explanation (2-3 sentences, cite sources)
+CRITICAL RULES:
+1. You MUST rule on EVERY argument — never refuse to rule
+2. If an argument describes a factual event (e.g. "forces attacked a ship"), identify the LEGAL IMPLICATIONS of that event and rule on those
+3. Even if exact precedents are not provided, use your knowledge of international law to rule — but cite which body of law applies
+4. "Inconclusive" should only be used when the claim is genuinely ambiguous under international law — NOT because you lack precedents
+5. Factual statements about military actions, blockades, detentions, or attacks ALWAYS have legal implications under IHL or IHRL
 
-You MUST respond with valid JSON only. No preamble, no markdown, no explanation
-outside the JSON object. Use this exact structure:
+SCORING:
++2.0 = binding law clearly supports the claim
++1.0 = advisory/soft law supports the claim
+-2.0 = binding law clearly contradicts the claim
+-1.0 = advisory law contradicts the claim
+0.0 = genuinely inconclusive after careful analysis
 
+For factual statements about events:
+- Attacks on civilian ships in international waters → apply UNCLOS + Geneva Conventions
+- Deportation of activists → apply ICCPR Article 9 + non-refoulement
+- Blockades preventing aid → apply GC IV Article 23 + AP I Article 54
+- Military force against unarmed civilians → apply IHL distinction principle
+
+Respond ONLY with valid JSON:
 {
-  "parsed_claim": "string",
-  "overall_stance": "supports" | "contradicts" | "inconclusive",
+  "parsed_claim": "string — the core legal claim or legal implication of the stated fact",
+  "overall_stance": "supports" or "contradicts" or "inconclusive",
   "score_delta": float,
-  "confidence": float between 0.0 and 1.0,
-  "explanation": "string",
-  "counter_argument": "string",
-  "precedent_stances": {
-    "<precedent_id>": "supports" | "contradicts" | "inconclusive"
-  }
+  "confidence": float 0.0-1.0,
+  "explanation": "string — cite specific law articles in your explanation",
+  "counter_argument": "string — cite specific legal text",
+  "precedent_stances": {"<precedent_id>": "supports" or "contradicts" or "inconclusive"}
 }
 """.strip()
 
@@ -63,52 +49,42 @@ async def adjudicate(
     raw_text: str,
     precedents: list[PrecedentMatch],
 ) -> VerdictResponse:
-    """
-    Given an argument and retrieved precedents, ask the LLM to:
-    - extract the core claim
-    - rule on each precedent's stance
-    - generate a counter-argument
-    - compute a score delta
-    Returns a fully typed VerdictResponse.
-    """
-
-    # Build the user message — this is the "stuffing" part of RAG
-    # We inject the real legal text so the LLM rules on actual law
     precedent_context = "\n\n".join([
         f"[{p.source_code}] {p.article_ref or ''}\n"
         f"Summary: {p.summary}\n"
         f"Weight: {'BINDING' if p.weight >= 1.0 else 'ADVISORY'}\n"
         f"ID: {p.id}"
         for p in precedents
-    ])
+    ]) if precedents else "No precedents retrieved — use your knowledge of international law to rule."
 
     user_message = f"""
 ARGUMENT SUBMITTED:
 {raw_text}
 
-RELEVANT LEGAL PRECEDENTS (retrieved from panel database):
-{precedent_context if precedent_context else "No precedents found — rule as inconclusive."}
+RELEVANT LEGAL PRECEDENTS:
+{precedent_context}
 
-Rule on this argument now. Respond in JSON only.
+INSTRUCTIONS:
+- If this is a factual statement, identify its legal implications and rule on those
+- Always cite specific articles or conventions in your explanation
+- You MUST give a definitive ruling (supports/contradicts) unless truly ambiguous
+- Rule now. Respond in JSON only.
 """.strip()
 
-    # Call the LLM — response_format forces JSON output (no markdown fences)
     response = await _client.chat.completions.create(
         model=settings.chat_model,
-        response_format={"type": "json_object"},  # JSON mode — critical
+        response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
-            {"role": "user",   "content": user_message},
+            {"role": "user", "content": user_message},
         ],
-        temperature=0.2,   # low temperature = more deterministic / consistent rulings
-        max_tokens=1000,
+        temperature=0.1,
+        max_tokens=1200,
     )
 
-    # Parse the JSON response
     raw_json = response.choices[0].message.content
     data = json.loads(raw_json)
 
-    # Update each precedent's stance from the LLM's ruling
     stances: dict[str, str] = data.get("precedent_stances", {})
     for p in precedents:
         pid = str(p.id)
